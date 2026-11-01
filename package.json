@@ -1,0 +1,1 @@
+{"name":"swell-enterprise","private":true,"scripts":{"setup":"npm i && npm i --prefix server && npm i --prefix client","dev":"concurrently -n api,web -c yellow,green \"npm run dev --prefix server\" \"npm run dev --prefix client\""},"devDependencies":{"concurrently":"^8.2.2"}}
