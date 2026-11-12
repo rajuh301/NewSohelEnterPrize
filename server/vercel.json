@@ -1,5 +1,17 @@
 {
-  "version": 2,
-  "builds": [{ "src": "index.ts", "use": "@vercel/node" }],
-  "routes": [{ "src": "/(.*)", "dest": "index.ts" }]
+  "services": {
+    "client": {
+      "root": "client/",
+      "framework": "nextjs"
+    },
+    "server": {
+      "root": "server/",
+      "framework": "express",
+      "entrypoint": "index.ts"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "server" } },
+    { "source": "/(.*)", "destination": { "service": "client" } }
+  ]
 }
