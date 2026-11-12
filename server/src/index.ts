@@ -9,15 +9,27 @@ import jwt from 'jsonwebtoken';
 const app = express(); app.use(cors(), express.json());
 const SECRET = process.env.JWT_SECRET || 'dev-secret';
 
-const User = mongoose.model('User', new Schema({ name: String, username: { type: String, unique: true }, role: String, salt: String, hash: String }));
-const Remit = mongoose.model('Remittance', new Schema({
+// ---------- DB (serverless e cache kore connect) ----------
+let conn: Promise<typeof mongoose> | null = null;
+const connectDB = () => {
+  if (!conn) conn = mongoose.connect(process.env.MONGO_URI as string);
+  return conn;
+};
+// protiti request e age DB connect nishchit kore (routes er age thakte hobe)
+app.use(async (_req: Request, res: Response, next: NextFunction) => {
+  try { await connectDB(); next(); }
+  catch (e: any) { conn = null; res.status(500).json({ error: 'MongoDB সংযোগ ব্যর্থ: ' + e.message }); }
+});
+
+const User = mongoose.models.User || mongoose.model('User', new Schema({ name: String, username: { type: String, unique: true }, role: String, salt: String, hash: String }));
+const Remit = mongoose.models.Remittance || mongoose.model('Remittance', new Schema({
   date: Date, sender: String, receiver: String, phone: String, method: String, account: String, bank: String,
   myr: Number, rate: Number, bdt: Number,
   receivedMYR: { type: Number, default: 0 }, receipts: [{ amount: Number, date: Date, by: String }],
   payout: { status: { type: String, default: 'pending' }, trx: String, note: String, at: Date, by: String },
   note: String, createdBy: String
 }, { timestamps: true }));
-const Share = mongoose.model('Share', new Schema({ token: String, from: String, to: String, sender: String, status: String }));
+const Share = mongoose.models.Share || mongoose.model('Share', new Schema({ token: String, from: String, to: String, sender: String, status: String }));
 
 // ---------- helpers ----------
 type Role = 'malaysia' | 'bangladesh';
@@ -94,19 +106,19 @@ app.post('/api/remittances', auth('malaysia'), parse(remitSchema), wrap(async (r
   res.status(201).json(await Remit.create({ ...d, createdBy: req.user.name }));
 }));
 app.post('/api/remittances/:id/receive', auth('malaysia'), parse(amountSchema), wrap(async (req, res) => {
-  const r = await Remit.findById(req.params.id); if (!r) return res.status(404).json({ error: 'পাওয়া যায়নি' });
-  if (req.data.amount > r.myr! - r.receivedMYR! + 1e-9) return res.status(400).json({ error: 'বাকির চেয়ে বেশি জমা নেওয়া যাবে না' });
-  r.receivedMYR! += req.data.amount; r.receipts.push({ amount: req.data.amount, date: new Date(), by: req.user.name });
+  const r: any = await Remit.findById(req.params.id); if (!r) return res.status(404).json({ error: 'পাওয়া যায়নি' });
+  if (req.data.amount > r.myr - r.receivedMYR + 1e-9) return res.status(400).json({ error: 'বাকির চেয়ে বেশি জমা নেওয়া যাবে না' });
+  r.receivedMYR += req.data.amount; r.receipts.push({ amount: req.data.amount, date: new Date(), by: req.user.name });
   res.json(await r.save());
 }));
 app.post('/api/remittances/:id/payout', auth('bangladesh'), parse(payoutSchema), wrap(async (req, res) => {
-  const r = await Remit.findById(req.params.id); if (!r) return res.status(404).json({ error: 'পাওয়া যায়নি' });
+  const r: any = await Remit.findById(req.params.id); if (!r) return res.status(404).json({ error: 'পাওয়া যায়নি' });
   if (r.payout?.status === 'paid') return res.status(400).json({ error: 'এটি আগেই পরিশোধ করা হয়েছে' });
   r.payout = { status: 'paid', trx: req.data.trx, note: req.data.note, at: new Date(), by: req.user.name };
   res.json(await r.save());
 }));
 app.delete('/api/remittances/:id', auth('malaysia'), wrap(async (req, res) => {
-  const r = await Remit.findById(req.params.id);
+  const r: any = await Remit.findById(req.params.id);
   if (r?.payout?.status === 'paid') return res.status(400).json({ error: 'পরিশোধ হয়ে গেছে, মোছা যাবে না' });
   await Remit.findByIdAndDelete(req.params.id); res.json({ ok: true });
 }));
@@ -117,11 +129,16 @@ app.post('/api/share', auth(), wrap(async (req, res) => {
   await Share.create({ token, from, to, sender, status }); res.json({ token });
 }));
 app.get('/api/share/:token', wrap(async (req, res) => {
-  const s = await Share.findOne({ token: req.params.token }); if (!s) return res.status(404).json({ error: 'লিংকটি সঠিক নয়' });
+  const s: any = await Share.findOne({ token: req.params.token }); if (!s) return res.status(404).json({ error: 'লিংকটি সঠিক নয়' });
   const f = { from: s.from || '', to: s.to || '', sender: s.sender || '', status: s.status || '' };
   res.json({ filter: f, ...(await statement(f)) });
 }));
 
-mongoose.connect(process.env.MONGO_URI as string)
-  .then(() => app.listen(process.env.PORT || 5000, () => console.log('API চালু: http://localhost:' + (process.env.PORT || 5000))))
-  .catch((e: Error) => { console.error('MongoDB সংযোগ ব্যর্থ:', e.message); process.exit(1); });
+// ---------- start ----------
+// local e chalanor jonno (Vercel e VERCEL env set thake, tai listen hobe na)
+if (!process.env.VERCEL) {
+  const port = process.env.PORT || 5000;
+  app.listen(port, () => console.log('API চালু: http://localhost:' + port));
+}
+
+export default app; // Vercel er jonno dorkar
